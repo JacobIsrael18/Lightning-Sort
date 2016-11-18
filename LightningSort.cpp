@@ -17,6 +17,8 @@
 #include <ctime>
 #include <cmath>
 #include <sstream>
+#include <pthread.h>
+#include <unistd.h>
 
 #include "BankAccount.cpp"  // www.CorporateWebPros.com/BankAccount.cpp.txt
 
@@ -25,6 +27,14 @@
 #endif
 
 using namespace std;
+
+const static int TOTAL_CHARACTERS = 256;
+// const static uint8_t characterMapping[] = {' ', 'A', 'a', 'B', 'b', 'C', 'c', 'D', 'd', 'E', 'e', 'F', 'f', 'G', 'g', 'H', 'h', 'I', 'i', 'J', 'j', 'K', 'k', 'L', 'l', 'M', 'm', 'N', 'n', 'O', 'o', 'P', 'p', 'Q', 'q', 'R', 'r', 'S', 's', 'T', 't', 'U', 'u', 'V', 'v', 'W', 'w', 'X', 'x', 'Y', 'y', 'Z', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+
+static uint8_t characterValue[TOTAL_CHARACTERS];
+const static uint8_t DEFAULT_CHARACTER_VALUE = 0;
+pthread_once_t oneTimeMutex = PTHREAD_ONCE_INIT;
+
 
 class LightningSorter{
 	//_______________________________________________________________________________	
@@ -204,84 +214,171 @@ private:
 			}
 		}
 	} // end function
-	
-   //----------------------------------------------------------
-	const static int TOTAL_CHARS = 64;
+	 
+    
+    //==========================================================
+    //  initializeCharacterValueArray(voi
+    // This maps characters to values. You can make your own mapping if you like.
+    //==========================================================
+    static void initializeCharacterValueArray(void){
+        static bool firstTime = true;
+        
+        if(firstTime == true){
+            firstTime = false;
+            
+            for(int i = 0 ; i <  TOTAL_CHARACTERS ; i++){
+                characterValue[i] = DEFAULT_CHARACTER_VALUE;   // Turn 'illegal' characters into a space char
+            }
+            
+            uint8_t index = 0;
+            // Space is first
+            characterValue[' '] = index;
+            index++ ;
+            for(int i = 'A' ; i <= 'Z' ; i++){
+                characterValue[i] = index;
+                index++ ;
+            }
+            int lowerCaseDifference = 'A' - 'a';
+            
+            for(uint8_t i = 'a' ; i <= 'z' ; i++){
+                characterValue[ i ] =   characterValue[(uint8_t) (i + lowerCaseDifference) ];
+            }
+            for(uint8_t i = '0' ; i <= '9' ; i++){
+                characterValue[ i ] = index;
+                index++ ;
+            }
+        }
+    }
+    
 	//==========================================================
-	//                    getCharValue
-	// This maps characters to values. You can make your own mapping if you like.
-	// Be sure to change TOTAL_CHARS 
+	//                    getCharacterValue
+    // Get the sort order of a character
+    // Lower values should be sorted before higher values
 	//==========================================================
-	static int getCharValue(char chr){
-		int value = toupper(chr) - ' '; // space == 0
-		// Turn 'illegal' characters into a space char
-		if(value < 0 || value >= TOTAL_CHARS){
-			value = 0;
-		}
-		return value;
-	}
-	
+    static int getCharacterValue(char theCharacter){
+#if defined __APPLE__ || defined __linux__
+        pthread_once(&oneTimeMutex, initializeCharacterValueArray);
+#elif defined _WIN32 || defined _WIN64
+        initializeCharacterValueArray();
+#endif
+        return characterValue[theCharacter];
+    }
+
+    //==========================================================
+    //                   recursiveStringSortByCase(s
+    //  Sort strings of the same length and text, that possibly have different cases (Upper / Lower)
+    // Should never be called on an array of strings that are different (except by case)
+    //==========================================================
+    static void recursiveStringSortByCase(string* stringArray, int arrayLength, int charPosition){
+        if (charPosition >= stringArray[0].length() ) {
+            return;
+        }
+        string swapString;
+        int lowerCaseIndex = arrayLength - 1;
+        int upperCaseIndex = 0;
+        
+        while (upperCaseIndex < lowerCaseIndex ) {
+            while (upperCaseIndex < lowerCaseIndex  && toupper(stringArray[upperCaseIndex][charPosition]) == stringArray[upperCaseIndex][charPosition])  {
+                upperCaseIndex++ ;
+            }
+            while (upperCaseIndex < lowerCaseIndex && tolower(stringArray[lowerCaseIndex][charPosition]) == stringArray[lowerCaseIndex][charPosition]) {
+                lowerCaseIndex-- ;
+            }
+            // Swap
+            if(upperCaseIndex < lowerCaseIndex) {
+                swapString = stringArray[lowerCaseIndex];
+                stringArray[lowerCaseIndex] = stringArray[upperCaseIndex];
+                stringArray[upperCaseIndex] = swapString;
+                upperCaseIndex++ ;
+                lowerCaseIndex-- ;
+            }
+        }
+        // At least 2 strings to sort in each bucket ?
+        if(upperCaseIndex >= 2){
+            recursiveStringSortByCase(stringArray, upperCaseIndex, charPosition + 1);
+        }
+        if(arrayLength - upperCaseIndex >= 2){
+            recursiveStringSortByCase(&stringArray[upperCaseIndex], arrayLength - upperCaseIndex, charPosition + 1);
+        }
+    }
+
 	//==========================================================
 	//                    recursiveLightningSort
 	//  for strings
 	//==========================================================
-	static void recursiveLightningSort(string* stringArray, int length, int charPosition){	
+	static void recursiveLightningSort(string* stringArray, int arrayLength, int charPosition){
+
 		int shortStringCount = 0;
-		int charCount[TOTAL_CHARS];
-		int charPtr[TOTAL_CHARS];
-		for(int i = 0 ; i < TOTAL_CHARS ; i++){
+		int charCount[TOTAL_CHARACTERS];
+		int charPtr[TOTAL_CHARACTERS];
+		for(int i = 0 ; i < TOTAL_CHARACTERS ; i++){
 			charCount[i] = 0;
 		}
-		int* charValue = new int[length];
-		// First iteration through the string array for counts
-		for(int i = 0 ; i < length ; i++){
+		int* charValue = new int[arrayLength];
+        string* tempStringArray = new string[arrayLength];
+        
+        // First iteration through the string array for counts of each character
+        for(int i = 0 ; i < arrayLength ; i++){
 			if(stringArray[i].length() <= charPosition){
 				shortStringCount++ ;
 			}
 			else{
-				charValue[i] = getCharValue(stringArray[i][charPosition]);
-				charCount[ charValue[i] ]++ ;
-			}
-		}
-		int shortStringPtr = shortStringCount - 1;
-		charPtr[0] = charCount[0] + shortStringPtr;
-		// Turn integers into placement pointers
-		for(int i = 1 ; i < TOTAL_CHARS ; i++){
-			charPtr[i] = charCount[i] + charPtr[i-1] ;
-		}
-		string* tempStringArray = new string[length];
-		// Place strings in-place in the new array
-		for(int i = 0 ; i < length ; i++){
-			if(stringArray[i].length() <= charPosition){
-				tempStringArray[ shortStringPtr ] = stringArray[i] ;
-				shortStringPtr-- ;
-			}
-			else{
-				tempStringArray[ charPtr[charValue[i]] ] = stringArray[i] ;
-				charPtr[charValue[i]]-- ;
-			}
-		}
-		
-		// Copy back
-		for(int i= 0 ; i< length ; i ++){
-			stringArray[i] = tempStringArray[i];
-		}	
-		
-		delete [] tempStringArray;
-		delete [] charValue;
-		// Recusively subsort the strings that are not short
-		// Subarrays must have length 2 or more
-		// Sort by the next character position
-		for(int i = 1 ; i < TOTAL_CHARS ; i++){
-			if(charCount[i] > 1){
-				// cout << "i = " << i << " count = " << charCount[i] << " offset = " << charPtr[i] << endl; cout.flush();
-				recursiveLightningSort(&stringArray[ charPtr[i] + 1 ] , charCount[i], charPosition+1);
-			}
-		}
-	} // end function	
-	
-	
-	//==========================================================
+				charValue[i] = getCharacterValue(stringArray[i][charPosition]);
+                charCount[ charValue[i] ]++ ;
+            }
+        }
+ 
+        int shortStringPtr = 0;
+        // Each pointer points to the last position in the 'bucket'
+        charPtr[0] = shortStringCount;
+        // Turn integers into placement pointers
+        for(int i = 1 ; i < TOTAL_CHARACTERS ; i++){
+            charPtr[i] = charPtr[i-1] + charCount[i-1];
+        }
+        
+        // Place strings in-place in the new array
+        for(int i = 0 ; i < arrayLength ; i++){
+            if(stringArray[i].length() <= charPosition){
+                tempStringArray[ shortStringPtr ] = stringArray[i] ;
+                shortStringPtr++ ;
+            }
+            else{
+                tempStringArray[ charPtr[charValue[i]] ] = stringArray[i];
+                charPtr[charValue[i]]++ ;
+            }
+        }
+        
+        // Move the  will end up at the front of their buckets
+        charPtr[0] = shortStringCount;
+        for(int i = 1 ; i < TOTAL_CHARACTERS ; i++){
+            charPtr[i] = charPtr[i-1] + charCount[i-1];
+        }
+        
+        // Is there more than one string with the same exact letters ?
+        // Sort these by Upper / Lower case
+        if (shortStringCount >= 2) {
+            recursiveStringSortByCase(tempStringArray, shortStringCount, 0);
+         }
+            
+        // Copy back into the original array
+        for(int i = 0 ; i < arrayLength ; i ++){
+            stringArray[i] = tempStringArray[i];
+        }
+        
+        delete [] tempStringArray;
+        delete [] charValue;
+        
+        // Recusively subsort the strings that are not short
+        for(int i = 0 ; i < TOTAL_CHARACTERS ; i++){
+            // Subarrays must have length 2 or more
+            if(charCount[i] > 1){    //                                                  Sort by the next character position
+                recursiveLightningSort(&stringArray[ charPtr[i] ], charCount[i], charPosition+1);
+            }
+        }
+    } // end function	
+    
+    
+    //==========================================================
 	//                recursiveLightningSort
 	//  for sorting  objects  sorted by  integer
 	// Requires that the objects have a function that 
@@ -459,11 +556,10 @@ private:
 	//==========================================================
 	template <class T> static void recursiveLightningSort(T* objectArray[], int length, int charPosition, string (* getString)(T*)){
 		T** tempObjectArray = new T*[length];
-		const static int TOTAL_CHARS = 64;
 		int shortStringCount = 0;
-		int charCount[TOTAL_CHARS];
-		int charPtr[TOTAL_CHARS];		
-		for(int i = 0 ; i < TOTAL_CHARS ; i++){
+		int charCount[TOTAL_CHARACTERS];
+		int charPtr[TOTAL_CHARACTERS];		
+		for(int i = 0 ; i < TOTAL_CHARACTERS ; i++){
 			charCount[i] = 0;
 		}
 		int* charValue = new int[length];
@@ -476,13 +572,13 @@ private:
 				shortStringCount++ ;
 			}
 			else{
-				charValue[i] = getCharValue(tempString[charPosition]);
+				charValue[i] = getCharacterValue(tempString[charPosition]);
 				charCount[ charValue[i] ]++ ;
 			}
 		}
 		charPtr[0] = shortStringCount;// charCount[0] + shortStringPtr;
 		// Turn integers into placement pointers
-		for(int i = 1 ; i < TOTAL_CHARS ; i++){
+		for(int i = 1 ; i < TOTAL_CHARACTERS ; i++){
 			charPtr[i] = charPtr[i-1] + charCount[i-1];
 		}		
 		// Place strings in-place in the new array
@@ -505,7 +601,7 @@ private:
 		// Recursively subsort the strings that are not short
 		// Subarrays must have length 2 or more
 		// Sort by the next character position
-		for(int i = 0 ; i < TOTAL_CHARS ; i++){
+		for(int i = 0 ; i < TOTAL_CHARACTERS ; i++){
 			if(charCount[i] > 1){
             recursiveLightningSort(&objectArray[ charPtr[i] - charCount[i] ] , charCount[i], charPosition+1, getString);
 			}
@@ -661,7 +757,8 @@ public:
 				startPosition++ ;
 			}
 		}
-		recursiveLightningSort(&stringArray[startPosition], length-startPosition, 0);	
+        
+        recursiveLightningSort(&stringArray[startPosition], length - startPosition, 0);
 	} // end function 
 	
 	
@@ -834,6 +931,7 @@ int main(int argumentC, char** argumentV){
 	// Read the word list from a file of newline-seperated strings
 	int listLength = 180;
 	string* wordList = new string[listLength];
+
 	char* fileLocation;
 	if(argumentC > 1){ 
 		fileLocation = argumentV[1];	
@@ -849,7 +947,7 @@ int main(int argumentC, char** argumentV){
 	ifstream wordFile(fileLocation);
 	if(! wordFile.good()){
 		cout << "\nSorry. I could not find the text file with a list of strings (one string per line).\n";
-#ifdef __APPLE__
+#if defined __APPLE__ || defined __linux__
 		sleep(3);
 #elif defined _WIN32 || defined _WIN64
 		Sleep(3);	
@@ -860,59 +958,60 @@ int main(int argumentC, char** argumentV){
 	for(int i = 0 ; i < listLength ; i++){
 		wordFile >> wordList[i];
 		// end of list
-		if( wordList[i].length() <1){
-			listLength = i-1;
+		if( wordList[i].length() < 1){
+			listLength = i;
 		}
 	}
-	wordFile.close();
-
-	if(getYesNo("Shall I scramble the string array ? ")){
-		// Scramble the array to show that it can be randomized
-		// (not necessary) 
-		LightningSorter::scrambleStringArray(wordList, listLength);
-		
-		cout << "\n\n_______________SCRAMBLED STRING ARRAY________________" << endl; cout.flush();
-		for(int i = 0 ; i < listLength ; i++){
-			cout << wordList[i] << endl;
-		}
-	cout << "Array scrambled" << endl;		
-	}
-	cout << "Sorting strings" << endl;
-	clock_t endTime, startTime = clock();
-	LightningSorter::lightningSort(wordList,listLength);
-	endTime = clock(); 
-   cout << "\nSorted " << listLength << " words in " << getTime(startTime, endTime) << endl; 	
-   
-   if(getYesNo("Shall I print the sorted string array ? ")){
-      cout << "\n\n_______________SORTED STRING ARRAY________________" << endl;
-      cout << wordList[0] << endl;
-   }
-   for(int i = 1 ; i < listLength ; i++){ 
-      for(int j=0 ; j < wordList[i].length() ; j++){
-         
-         if(wordList[i-1].length() <= j || toupper(wordList[i][j]) > toupper(wordList[i-1][j])){
-            break;
-         }
-         
-         if(wordList[i][j] >= ' ' && wordList[i][j]<= '~' && wordList[i-1][j] >= ' ' && wordList[i-1][j] <= '~' && toupper(wordList[i][j]) < toupper(wordList[i-1][j])){
-            cout << "ERROR at char " << j << " of " << wordList[i] << " : "<< wordList[i+1] << endl;
-#ifdef __APPLE__
-            sleep(3);
-#elif defined _WIN32 || defined _WIN64
-            Sleep(3);	
-#endif
-            return(0);
-         } 
-         cout << wordList[i] << endl;
-      }
-   }
- 
-   int numberOfIntegers;
-   cout << "\n\nHow many integers would you like to sort ? ";
-   cin >> numberOfIntegers;
-   // Integers
-   userAnswer = getYesNo("Shall I print the integers ? ");
-   if(userAnswer)
+    wordFile.close();
+    
+    if(getYesNo("Shall I scramble the string array ? ")){
+        // Scramble the array to show that it can be randomized
+        // (not necessary)
+        LightningSorter::scrambleStringArray(wordList, listLength);
+        
+        cout << "\n\n_______________SCRAMBLED STRING ARRAY________________" << endl; cout.flush();
+        for(int i = 0 ; i < listLength ; i++){
+            cout << wordList[i] << endl;
+        }
+        cout << "\nArray scrambled" << endl;
+    }
+    cout << "\nSorting strings" << endl;
+    clock_t endTime, startTime = clock();
+    LightningSorter::lightningSort(wordList, listLength);
+    endTime = clock();
+    cout << "\nSorted " << listLength << " words in " << getTime(startTime, endTime) << endl;
+    
+    if(getYesNo("Shall I print the sorted string array ? ")){
+        cout << "\n\n_______________SORTED STRING ARRAY________________" << endl;
+        cout << wordList[0] << endl;
+    }
+    for(int i = 1 ; i < listLength ; i++){
+        // for(int j = 0 ; j < wordList[i].length() ; j++){
+            /*
+             if(wordList[i-1].length() <= j || toupper(wordList[i][j]) > toupper(wordList[i-1][j])){
+             break;
+             }
+             
+             if(wordList[i][j] >= ' ' && wordList[i][j]<= '~' && wordList[i-1][j] >= ' ' && wordList[i-1][j] <= '~' && toupper(wordList[i][j]) < toupper(wordList[i-1][j])){
+             cout << "ERROR at char " << j << " of " << wordList[i] << " : "<< wordList[i+1] << endl;
+             #if defined __APPLE__ || defined __linux__
+             sleep(3);
+             #elif defined _WIN32 || defined _WIN64
+             Sleep(3);
+             #endif
+             return(0);
+             }
+             */
+            cout << wordList[i] << endl;
+       // }
+    }
+    
+    int numberOfIntegers;
+    cout << "\n\nHow many integers would you like to sort ? ";
+    cin >> numberOfIntegers;
+    // Integers
+    userAnswer = getYesNo("Shall I print the integers ? ");
+    if(userAnswer)
       cout << "\n\n____________UNSORTED INTEGERS________________" << endl;
    
    int* integerArray = new int[numberOfIntegers];
@@ -942,7 +1041,7 @@ int main(int argumentC, char** argumentV){
          cout << integerArray[i] << endl;
 		if(integerArray[i] < integerArray[i-1] ){
 			cout << "ERROR at " << i << endl;
-#ifdef __APPLE__
+#if defined __APPLE__ || defined __linux__
 			sleep(3);
 #elif defined _WIN32 || defined _WIN64
 			Sleep(3);	
@@ -984,7 +1083,7 @@ int main(int argumentC, char** argumentV){
          cout << doubleArray[i] << endl;
       if(doubleArray[i] < doubleArray[i-1] ){
          cout << "ERROR at " << i << endl;
-#ifdef __APPLE__
+#if defined __APPLE__ || defined __linux__
          sleep(3);
 #elif defined _WIN32 || defined _WIN64
          Sleep(3);	
